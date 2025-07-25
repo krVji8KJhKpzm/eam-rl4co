@@ -67,9 +67,10 @@ dependencies = [
     "rich",
     "robust-downloader",
     "scipy",
-    "tensordict>=0.6.0",
-    "torchrl>=0.6.0",
+    "tensordict>=0.6.0,<0.8",
+    "torchrl>=0.6.0,<0.8",
     "wandb",
+    "torch==2.6.0",
 ]
 
 [project.optional-dependencies]
@@ -176,4 +177,15 @@ exclude_lines = [
     # Lines to exclude from coverage report (e.g., comments, debug statements)
     "pragma: no cover",
     "if __name__ == .__main__.:",
+]
+
+[tool.uv]
+# 仅示例：限定解析目标为 Linux x86_64
+environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'"
+]
+
+# 或要求“必须有 Linux x86_64 的轮子”
+required-environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'"
 ]
