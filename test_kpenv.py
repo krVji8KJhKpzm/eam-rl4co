@@ -3,7 +3,7 @@
 from rl4co.utils import RL4COTrainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, RichModelSummary
-from rl4co.models import EAM, AttentionModelPolicy, SymNCOPolicy, SymNCO, SymEAM, POMO
+from rl4co.models import EAM, AttentionModelPolicy, SymNCOPolicy, SymNCO, SymEAM, POMO, AttentionModel
 import argparse
 import multiprocessing as mp
 
@@ -75,17 +75,31 @@ def main(opt):
                 normalization="instance",
                 use_graph_context=False,
                 )
-    model = POMO(env, policy, 
+    if opt.model == "pomo":
+        model = POMO(env, policy, 
+                    batch_size=config['batch_size'], 
+                    optimizer_kwargs={"lr": 1e-4, "weight_decay": 1e-6},
+                    lr_scheduler = "MultiStepLR", 
+                    train_data_size = 100_000,
+                    test_data_size = 10_000,
+                    val_data_size = 10_000,
+                    num_augment = num_augment,
+                    lr_scheduler_kwargs = {"milestones": [160, 190], "gamma": 0.1},
+                    baseline = "shared", # pomo use shared baseline
+                    metrics = metric,)
+    elif opt.model == "am":
+        model = AttentionModel(
+                env, 
+                policy, 
                 batch_size=config['batch_size'], 
-                optimizer_kwargs={"lr": 1e-4, "weight_decay": 1e-6},
+                optimizer_kwargs={"lr": 1e-4,},
                 lr_scheduler = "MultiStepLR", 
                 train_data_size = 100_000,
                 test_data_size = 10_000,
                 val_data_size = 10_000,
-                num_augment = num_augment,
                 lr_scheduler_kwargs = {"milestones": [160, 190], "gamma": 0.1},
-                baseline = "shared", # pomo use shared baseline
-                metrics = metric,)
+                metrics = metric,
+            )
     if debug:
         logger = None
         trainer = RL4COTrainer(max_epochs=10, 
@@ -110,11 +124,6 @@ def main(opt):
         # callbacks = [checkpoint_callback, rich_model_summary]
         logger = WandbLogger(project="RL4CO_debug=" + str(debug), name=f"{model_name}_{env_name}{problem_size}")
         
-        if problem_size == 50:
-            max_epoch = 100
-        elif problem_size == 100:
-            max_epoch = 200
-        
         trainer = RL4COTrainer(max_epochs=max_epoch, 
                                 accelerator="gpu",
                                 precision=32,
@@ -127,5 +136,6 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', type=int, default=None, help='训练轮数')
     parser.add_argument('--cuda', type=int, default=0, help='CUDA序号')
     parser.add_argument('--problem_size', type=int, default=50, help='问题规模')
+    parser.add_argument('--model', type=str, default='am', help='模型名称')
     opt = parser.parse_args()
     main(opt)
