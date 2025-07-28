@@ -73,7 +73,7 @@ class FFSPEnv(RL4COEnvBase):
 
     def select_start_nodes(self, td, num_starts):
         self.tables.augment_machine_tables(num_starts)
-        selected = torch.full((num_starts * td.size(0),), self.num_job)
+        selected = torch.full((num_starts * td.size(0),), self.num_job).to(td.device)
         return selected
 
     def _move_to_next_machine(self, td):
@@ -451,3 +451,17 @@ class IndexTables:
     def get_stage_machine_index(self, idx, sub_time_idx):
         pomo_idx = idx // self.bs
         return self.stage_machine_table[pomo_idx, sub_time_idx]
+
+    def augment_machine_tables(self, num_starts):
+        """
+        Expand machine_table and stage_machine_table for multiple POMO starts.
+        This should be called before get_machine_index / get_stage_machine_index.
+        """
+        num_perms, total_machines = self.machine_table.shape
+
+        repeat_factor = (num_starts + num_perms - 1) // num_perms
+        extended_table = self.machine_table.repeat(repeat_factor, 1)[:num_starts]
+        extended_stage_table = self.stage_machine_table.repeat(repeat_factor, 1)[:num_starts]
+
+        self.machine_table = extended_table
+        self.stage_machine_table = extended_stage_table

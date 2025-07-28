@@ -108,7 +108,6 @@ class EAM(REINFORCE):
         self.ea_epoch = ea_kwargs.get("ea_epoch")
 
     def on_train_epoch_start(self):
-        # self.improve_prob = evolve_prob_schedule(self.current_epoch, self.max_epochs, self.improve_start_prob, self.improve_end_prob)
         self.improve_prob = step_schedule(self.current_epoch, self.ea_prob, self.ea_epoch)
 
     def shared_step(
@@ -128,18 +127,15 @@ class EAM(REINFORCE):
         
         # Evaluate policy
         if phase == "train":
-            init_td = td.clone()            
-            # None Parallial method only !!!
+            init_td = td.clone()
             original_out = None
             improved_out = None
             
             def run_original_policy():
-                # start_time = time.time()
                 if self.baseline_str == "rollout":
                     result = self.policy(td, self.env, phase=phase, num_starts=1, return_entropy=True)
                 else:
                     result = self.policy(td, self.env, phase=phase, num_starts=n_start, return_entropy=True)
-                # print('Original policy time:', time.time() - start_time)
                 return result
             
             def run_improved_policy(original_actions, td):
@@ -151,7 +147,6 @@ class EAM(REINFORCE):
                 improved_actions = None
                 
                 if hasattr(self, 'ea'):
-                    # start_time = time.time()
                     improved_actions, _ = evolution_worker(original_actions, td,
                                                        self.ea, self.env,)
                 
@@ -173,23 +168,18 @@ class EAM(REINFORCE):
                             phase=phase, 
                             num_starts=n_start, 
                             actions=improved_actions.to(device=device),
-                            # tanh_clipping = 20.0,
                         )
                         if result["actions"].shape[1] < original_actions.shape[1]:
                             padding_size = original_actions.shape[1] - result["actions"].shape[1]
                             result.update({"actions": torch.nn.functional.pad(result["actions"], (0, 0, 0, padding_size))})
-                    # self.set_decode_type_single(phase)
-                    
+
                     return result
                     
                 return None
             
             original_out = run_original_policy()
             improved_out = run_improved_policy(original_out["actions"], init_td)
-            
-            # if hasattr(self, 'shared_buffer'):
-            #     self.shared_buffer.add_rl_experience(original_out["actions"], init_td, n_start)
-            
+
             if self.baseline_str == "rollout":
                 # using am as baseline
                 original_reward = unbatchify(original_out["reward"], (n_aug, 1))
@@ -210,21 +200,7 @@ class EAM(REINFORCE):
                     improved_reward = unbatchify(improved_out["reward"], (n_aug, n_start))
                     improved_log_likelihood = unbatchify(improved_out["log_likelihood"], (n_aug, n_start))
                 
-                entropy = original_out["entropy"].mean()
-                # alpha = self.max_alpha * torch.exp(-self.beta * entropy / self.max_entropy)
-                # original_out.update({"alpha": alpha})
-                
-                # concat original and improved out_dicts
                 out = original_out
-                # if self.baseline_str == "rollout":
-                #     # using am as baseline
-                #     self.calculate_loss(td, batch, improved_out, improved_reward, improved_log_likelihood)
-                
-                #     out.update({
-                #         "loss": improved_out["loss"],
-                #     })
-                # else:
-                #     # using pomo as baseline
                 combined_out = {
                     k: torch.cat([original_out[k], improved_out[k]], dim=0) 
                     for k in original_out.keys() if k in improved_out and isinstance(original_out[k], torch.Tensor)
@@ -244,8 +220,6 @@ class EAM(REINFORCE):
                     "loss": combined_out["loss"],
                 })
             else:
-                total_loss = original_loss
-                
                 out = original_out
             
         else:
@@ -310,24 +284,6 @@ class EAM(REINFORCE):
         self.val_metrics = metrics.get("val", ["reward", "max_reward", "max_aug_reward"])
         self.test_metrics = metrics.get("test", ["reward", "max_reward", "max_aug_reward"])
         self.log_on_step = metrics.get("log_on_step", True)
-        
-    def set_decode_type_single(self, phase: str):
-        """Set decode type to `singlestart` for train, val and test in policy.
-        For example, if the decode type is `multistart_greedy`, it will be set to `greedy`.
-
-        Args:
-            phase: Phase to set decode type for. Must be one of `train`, `val` or `test`.
-        """
-        attribute = f"{phase}_decode_type"
-        attr_get = getattr(self.policy, attribute)
-        # If does not exist, log error
-        if attr_get is None:
-            log.error(f"Decode type for {phase} is None. Cannot remove `multistart_` prefix.")
-            return
-        elif "multistart" not in attr_get:
-            return
-        else:
-            setattr(self.policy, attribute, attr_get.replace("multistart_", ""))
         
     def calculate_loss(
         self,
@@ -603,3 +559,51 @@ class SymEAM(REINFORCE):
             
         metrics = self.log_metrics(out, phase, dataloader_idx=dataloader_idx)
         return {"loss": out.get("loss", None), **metrics}
+
+from rl4co.envs.common.base import RL4COEnvBase
+from rl4co.models.zoo.matnet.policy import MatNetPolicy, MultiStageFFSPPolicy
+from rl4co.utils.pylogger import get_pylogger
+
+def select_matnet_policy(env, **policy_params):
+    if env.name == "ffsp":
+        if env.flatten_stages:
+            return MatNetPolicy(env_name=env.name, **policy_params)
+        else:
+            return MultiStageFFSPPolicy(stage_cnt=env.num_stage, **policy_params)
+    else:
+        return MatNetPolicy(env_name=env.name, **policy_params)
+
+
+class MatNetEAM(EAM):
+    def __init__(
+        self,
+        env: RL4COEnvBase,
+        policy: nn.Module | MatNetPolicy = None,
+        num_starts: int = None,
+        policy_params: dict = {},
+        **kwargs,
+    ):
+        if policy is None:
+            policy = select_matnet_policy(env=env, **policy_params)
+
+        # Check if using augmentation and the validation of augmentation function
+        if kwargs.get("num_augment", 0) != 0:
+            log.warning("MatNet is using augmentation.")
+            if (
+                kwargs.get("augment_fn") in ["symmetric", "dihedral8"]
+                or kwargs.get("augment_fn") is None
+            ):
+                log.error(
+                    "MatNet does not use symmetric or dihedral augmentation. Seeting no augmentation function."
+                )
+                kwargs["num_augment"] = 0
+        else:
+            kwargs["num_augment"] = 0
+
+        super(MatNetEAM, self).__init__(
+            env=env,
+            policy=policy,
+            num_starts=num_starts,
+            baseline="shared",
+            **kwargs,
+        )

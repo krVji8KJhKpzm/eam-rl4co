@@ -50,6 +50,7 @@ def evolution_worker(actions, _td, ea, env):
         actions = actions.cpu()
         td = td.cpu()
         if not multi_start:
+            assert ea.env_name != "ffsp", "FFSP environment does not support single start evolution"
             # use data augmentation
             actions = actions.unsqueeze(1).cpu().numpy().astype(np.int64) # [batch_size, 1, seq_len]
             if ea.env_name == "tsp":
@@ -59,7 +60,6 @@ def evolution_worker(actions, _td, ea, env):
             elif ea.env_name == "op":
                 env_code = 3
                 
-            print(actions.shape)
             if np.any(np.all(actions == 0, axis=2)):
                 print("Warning: actions contains rows with all zeros.")
             actions = generate_batch_population(actions, env_code, ea.mutation_rate)
@@ -77,6 +77,8 @@ def evolution_worker(actions, _td, ea, env):
             keys = ['locs', 'real_prize', 'penalty']
         elif ea.env_name == "op":
             keys = ['locs', 'prize', 'max_length']
+        elif ea.env_name == "ffsp":
+            keys = ['job_duration', 'schedule', 'job_location', 'run_time']
             
         def process_batch(b):
             batch_actions = actions[b]
@@ -142,6 +144,10 @@ class EA():
             self.select_fn = elitism_selection
             self.crossover_fn = order_crossover_op
             self.mutate_fn = inverse_mutate_op
+        elif self.env_name == "ffsp":
+            self.select_fn = elitism_selection
+            self.crossover_fn = multi_point_crossover_ffsp
+            self.mutate_fn = swap_mutate_ffsp
         
         assert self.num_generations is not None, "Number of generations must be specified"
         assert self.mutation_rate is not None, "Mutation rate must be specified"
@@ -156,7 +162,7 @@ class EA():
         """
         cost = reward * -1
         """
-        device = td["locs"].device
+        device = td.device
         
         pop_copy = copy.deepcopy(pop)
         tensor_pop = torch.tensor(pop_copy, device=device, dtype=torch.int64) if not isinstance(pop, torch.Tensor) else pop.to(device=device, dtype=torch.int64)
@@ -167,14 +173,14 @@ class EA():
             for key, value in td.items():
                 expanded_td[key] = value.expand(pop_size, *value.shape[1:])
                 
-            assert expanded_td["locs"].device == tensor_pop.device, "Devices do not match"
+            assert expanded_td.device == tensor_pop.device, "Devices do not match"
             
             result = -self.reward_fn(expanded_td, tensor_pop).cpu().numpy().astype(np.float32)
             
             return result
         else:
-            if td["locs"].device != tensor_pop.device:
-                tensor_pop = tensor_pop.to(td["locs"].device)
+            if td.device != tensor_pop.device:
+                tensor_pop = tensor_pop.to(td.device)
         
         result = -self.reward_fn(td, tensor_pop).cpu().numpy().astype(np.float32)
         
@@ -192,6 +198,8 @@ class EA():
             fitness = calculate_fitness_cvrp(costs, problem_size)
         elif self.env_name == "op":
             fitness = calculate_fitness_op(costs, problem_size)
+        elif self.env_name == "ffsp":
+            fitness = calculate_fitness_ffsp(costs, problem_size)
         return fitness
         
     def select(self, pop, fitness):
@@ -251,15 +259,10 @@ class EA():
         if self.env_name == "op":
             dist_mat = calculate_distance_matrix(td["locs"].cpu().numpy())
             pop = self.mutate(pop, td, dist_mat)
-        elif self.env_name == "cvrp" or self.env_name == "pctsp":
+        elif self.env_name == "cvrp" or self.env_name == "pctsp" or self.env_name == "ffsp":
             pop = self.mutate(pop, td)
         # before_update = copy.deepcopy(pop)
         fitness = self.fitness_fn(pop, td, verbose)
-        
-        best_fitness_history = []
-        stagnation_counter = 0
-        stagnation_threshold = 5
-        improvement_threshold = 1e-4
         
         initial_first_nodes = copy.deepcopy(init_pop[:, 0])
         node_to_position = {node: idx for idx, node in enumerate(initial_first_nodes)}
@@ -360,6 +363,18 @@ def calculate_fitness_cvrp(costs, problem_size):
 def calculate_fitness_op(costs, problem_size):
     result = np.empty_like(costs)
     worst_cost = np.float32(0.0)
+    for i in range(len(costs)):
+        result[i] = worst_cost - costs[i]
+    return result
+
+@nb.njit(nb.float32[:](nb.float32[:], nb.int64), nogil=True)
+def calculate_fitness_ffsp(costs, problem_size):
+    """
+    针对FFSP问题的适应度计算，假设成本是负的
+    """
+    MAX_COST = 1e5
+    result = np.empty_like(costs)
+    worst_cost = np.float32(MAX_COST)
     for i in range(len(costs)):
         result[i] = worst_cost - costs[i]
     return result
@@ -1915,6 +1930,73 @@ def inverse_mutate_op(pop, mutation_rate, prize, dist_matrix, max_distances):
                 for j in range(chrom_length):
                     mutated_pop[i, j] = pop[i, j]
             
+    return mutated_pop
+
+@nb.njit(nb.int64[:,:](nb.int64[:,:], nb.float32), parallel=True, nogil=True)
+def multi_point_crossover_ffsp(parents, crossover_rate):
+    """
+    多点交叉算法
+    
+    Args:
+        parents: 父代种群
+        crossover_rate: 交叉率
+    
+    Returns:
+        后代种群
+    """
+    pop_size, chrom_length = parents.shape
+    offspring = np.zeros((pop_size, chrom_length), dtype=nb.int64)
+    
+    for i in prange(pop_size // 2):
+        p1_idx = i * 2
+        p2_idx = i * 2 + 1
+        
+        parent1 = parents[p1_idx]
+        parent2 = parents[p2_idx]
+        
+        if np.random.random() < crossover_rate:
+            # 随机选择多个交叉点
+            crossover_points = np.sort(np.random.choice(chrom_length, 2, replace=False))
+            start, end = crossover_points
+            offspring[p1_idx, start:end] = parent2[start:end]
+            offspring[p2_idx, start:end] = parent1[start:end]
+            
+            # 交换其余部分
+            offspring[p1_idx, :start] = parent1[:start]
+            offspring[p1_idx, end:] = parent1[end:]
+            offspring[p2_idx, :start] = parent2[:start]
+            offspring[p2_idx, end:] = parent2[end:]
+        else:
+            offspring[p1_idx] = parent1
+            offspring[p2_idx] = parent2
+            
+    return offspring
+
+@nb.njit(nb.int64[:,:](nb.int64[:,:], nb.float64), parallel=True, nogil=True)
+def swap_mutate_ffsp(pop, mutation_rate):
+    """
+    交换变异算法
+    
+    Args:
+        pop: 种群矩阵
+        mutation_rate: 变异率
+    
+    Returns:
+        变异后的种群
+    """
+    pop_size, chrom_length = pop.shape
+    mutated_pop = pop.copy()
+    
+    random_vals = np.random.random(pop_size)
+    
+    for i in prange(pop_size):
+        if random_vals[i] < mutation_rate:
+            # 随机选择两个基因进行交换
+            idx1 = np.random.randint(0, chrom_length)
+            idx2 = np.random.randint(0, chrom_length)
+            
+            mutated_pop[i, idx1], mutated_pop[i, idx2] = mutated_pop[i, idx2], mutated_pop[i, idx1]
+    
     return mutated_pop
 
 @nb.njit(nb.int64[:,:](nb.int64[:], nb.int64, nb.int64, nb.float64, nb.bool), parallel=True, nogil=True)

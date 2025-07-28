@@ -79,26 +79,26 @@ class MatNetFFSPDecoder(AttentionModelDecoder):
 
         bs, _, emb_dim = job_emb.shape
 
-        job_emb_plus_one = torch.cat(
-            (job_emb, self.no_job_emb.expand((bs, 1, emb_dim))), dim=1
-        )
+        # job_emb_plus_one = torch.cat(
+        #     (job_emb, self.no_job_emb.expand((bs, 1, emb_dim))), dim=1
+        # )
 
         (
             glimpse_key_fixed,
             glimpse_val_fixed,
             logit_key,
         ) = self.project_node_embeddings(
-            job_emb_plus_one
+            job_emb
         ).chunk(3, dim=-1)
 
         # Optionally disable the graph context from the initial embedding as done in POMO
         if self.use_graph_context:
-            graph_context = self.project_fixed_context(job_emb_plus_one.mean(1))
+            graph_context = self.project_fixed_context(job_emb.mean(1))
         else:
             graph_context = 0
 
         embeddings = TensorDict(
-            {"job_embeddings": job_emb_plus_one, "machine_embeddings": ma_emb},
+            {"job_embeddings": job_emb, "machine_embeddings": ma_emb},
             batch_size=bs,
         )
         # Organize in a dataclass for easy access

@@ -1,7 +1,7 @@
 from typing import Any, Callable
 
 import torch.nn as nn
-
+import torch
 from rl4co.data.transforms import StateAugmentation
 from rl4co.envs.common.base import RL4COEnvBase
 from rl4co.models.rl.reinforce.reinforce import REINFORCE

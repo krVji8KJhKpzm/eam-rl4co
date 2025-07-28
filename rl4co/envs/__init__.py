@@ -27,6 +27,7 @@ from rl4co.envs.routing import (
     SVRPEnv,
     TSPEnv,
     TSPkoptEnv,
+    KnapsackEnv,
 )
 
 # Scheduling
@@ -59,6 +60,7 @@ ENV_REGISTRY = {
     "tsp_kopt": TSPkoptEnv,
     "mcp": MCPEnv,
     "flp": FLPEnv,
+    "knapsack": KnapsackEnv,
 }
 
 

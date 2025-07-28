@@ -42,6 +42,7 @@ def env_init_embedding(env_name: str, config: dict) -> nn.Module:
         "shpp": TSPInitEmbedding,
         "flp": FLPInitEmbedding,
         "mcp": MCPInitEmbedding,
+        "knapsack": VRPInitEmbedding,
     }
 
     if env_name not in embedding_registry:
@@ -89,7 +90,7 @@ class MatNetInitEmbedding(nn.Module):
         self.mode = mode
 
     def forward(self, td: TensorDict):
-        dmat = td["cost_matrix"]
+        dmat = td["job_duration"]
         b, r, c = dmat.shape
 
         row_emb = torch.zeros(b, r, self.embed_dim, device=dmat.device)
