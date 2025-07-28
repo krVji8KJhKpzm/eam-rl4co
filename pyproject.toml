@@ -71,6 +71,7 @@ dependencies = [
     "torchrl>=0.6.0,<0.8",
     "wandb",
     "torch==2.6.0",
+    "pulp",
 ]
 
 [project.optional-dependencies]

@@ -11,6 +11,8 @@ from rl4co.utils.pylogger import get_pylogger
 
 from .generator import KnapsackGenerator
 
+import pulp
+
 log = get_pylogger(__name__)
 
 
@@ -187,3 +189,50 @@ class KnapsackEnv(RL4COEnvBase):
         )
         self.reward_spec = Unbounded(shape=(1,))
         self.done_spec = Unbounded(shape=(1,), dtype=torch.bool)
+        
+    def get_optimal_solutions(self, td: TensorDict) -> float:
+        """Get average optimal solution value for the knapsack problem over a batch."""
+        weights = td["demand"].cpu().numpy()
+        values = td["values"].cpu().numpy()
+        capacities = td["vehicle_capacity"].cpu().numpy()
+        batch_size = weights.shape[0]
+        objective_values = []
+    
+        from tqdm import tqdm
+    
+        for b in tqdm(range(batch_size), desc="Solving Knapsack"):
+            prob = pulp.LpProblem("Knapsack", pulp.LpMaximize)
+            x = [pulp.LpVariable(f"x_{i}", cat="Binary") for i in range(weights.shape[1])]
+            prob += pulp.lpSum(values[b, i] * x[i] for i in range(len(x))), "Objective"
+            prob += (
+                pulp.lpSum(weights[b, i] * x[i] for i in range(len(x))) <= capacities[b],
+                "CapacityConstraint",
+            )
+            solver = pulp.PULP_CBC_CMD(msg=False)
+            prob.solve(solver)
+            objective_values.append(pulp.value(prob.objective))
+    
+        return sum(objective_values) / batch_size
+    
+    def get_greedy_solutions(self, td: TensorDict) -> float:
+        """Get average greedy solution value for the knapsack problem over a batch."""
+        weights = td["demand"].cpu().numpy()
+        values = td["values"].cpu().numpy()
+        capacities = td["vehicle_capacity"].cpu().numpy()
+        batch_size = weights.shape[0]
+        objective_values = []
+    
+        from tqdm import tqdm
+    
+        for b in tqdm(range(batch_size), desc="Greedy Knapsack"):
+            ratio = values[b] / weights[b]
+            idx = ratio.argsort()[::-1]  # 按单位价值降序排列
+            total_weight = 0
+            total_value = 0
+            for i in idx:
+                if total_weight + weights[b, i] <= capacities[b]:
+                    total_weight += weights[b, i]
+                    total_value += values[b, i]
+            objective_values.append(total_value)
+    
+        return sum(objective_values) / batch_size
