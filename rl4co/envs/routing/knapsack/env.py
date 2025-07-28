@@ -94,7 +94,7 @@ class KnapsackEnv(RL4COEnvBase):
                 "demand": td["demand"],
                 "values": td["values"],
                 "locs": td["locs"],
-                "capacity": td["capacity"],
+                "vehicle_capacity": td["vehicle_capacity"],
                 "current_node": torch.zeros(*batch_size, 1, dtype=torch.long, device=device),
                 "used_capacity": torch.zeros((*batch_size, 1), device=device),
                 "total_value": torch.zeros((*batch_size, 1), device=device),
@@ -110,7 +110,7 @@ class KnapsackEnv(RL4COEnvBase):
 
     @staticmethod
     def get_action_mask(td: TensorDict) -> torch.Tensor:
-        exceeds_cap = td["demand"] + td["used_capacity"] > td["capacity"] + 1e-5
+        exceeds_cap = td["demand"] + td["used_capacity"] > td["vehicle_capacity"]
         mask = td["visited"][..., 1:].to(exceeds_cap.dtype) | exceeds_cap
         action_mask = ~mask
         action_mask = torch.cat((torch.ones_like(action_mask[..., :1]), action_mask), -1)
@@ -133,7 +133,16 @@ class KnapsackEnv(RL4COEnvBase):
 
         weights = torch.cat((torch.zeros_like(td["demand"][..., :1]), td["demand"]), dim=-1)
         total_weight = weights.gather(1, actions).sum(-1)
-        assert (total_weight <= td["capacity"].squeeze(-1) + 1e-5).all(), "Capacity exceeded"
+        assert (total_weight <= td["vehicle_capacity"].squeeze(-1) + 1e-5).all(), "Capacity exceeded"
+        # if not (total_weight <= td["vehicle_capacity"].squeeze(-1) + 1e-5).all():
+        #     torch.set_printoptions(profile="full")
+        #     mask = total_weight > 12.5
+        #     print(f"Total weight > 12.5: {total_weight[mask]}")
+        #     # print("Actions:", actions)
+        #     print(f"Total weight.shape:", total_weight.shape)
+        #     print(f"td['vehicle_capacity'].shape: {td['vehicle_capacity'].squeeze(-1).shape}")
+        #     print("Actions.shape:", actions.shape)
+        #     exit()
 
     def _make_spec(self, generator: KnapsackGenerator):
         self.observation_spec = Composite(

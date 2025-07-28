@@ -85,7 +85,7 @@ class KnapsackGenerator(Generator):
                 "demand": weights,
                 "values": values,
                 "locs": locs,
-                "capacity": capacity,
+                "vehicle_capacity": capacity,
             },
             batch_size=batch_size,
         )

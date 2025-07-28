@@ -4,13 +4,12 @@ from rl4co.utils import RL4COTrainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, RichModelSummary
 from rl4co.models import EAM, AttentionModelPolicy, SymNCOPolicy, SymNCO, SymEAM, POMO
-
+import argparse
 import multiprocessing as mp
 
 import threading
 import os
 os.environ["WANDB_MODE"] = "offline"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # Ensure CUDA operations are synchronous for debugging
 """
 eam_pomo_cvrp100 - cuda:0
 eam_pomo_cvrp50 - cuda:1
@@ -19,14 +18,22 @@ eam_am_cvrp50 - cuda:3
 eam_symnco_cvrp100 - cuda:4
 eam_symnco_cvrp50 - cuda:5
 """
-def main():
-    
-    problem_size = 50
+def main(opt):
+    problem_size = opt.problem_size
+    device = [opt.cuda]
+    # ...existing code...
+    if opt.epoch is not None:
+        if problem_size == 50:
+            max_epoch = 100
+        elif problem_size == 100:
+            max_epoch = 200
+    else:
+        max_epoch = opt.epoch  # 支持自定义epoch
+
     # model = 'eam'
     model_name = 'eam_pomo'
-    debug = True
+    debug = False
     # device = [0,1,2,3,4,5,6]
-    device = [5]
     num_augment = 0
     env_name = 'kp'
     config = {
@@ -56,7 +63,9 @@ def main():
         generator = CVRPGenerator(num_loc=problem_size, loc_distribution="uniform", num_depots=1)
         env = CVRPEnv(generator)
     elif env_name == 'kp':
-        generator = KnapsackGenerator(num_loc=problem_size, loc_distribution="uniform", min_demand=1, max_demand=10)
+        generator = KnapsackGenerator(num_items=problem_size, 
+                                      weight_distribution="uniform", 
+                                      value_distribution="uniform")
         env = KnapsackEnv(generator)
     policy = AttentionModelPolicy(
                 env_name=env.name, 
@@ -114,5 +123,9 @@ def main():
     trainer.fit(model)
         
 if __name__ == "__main__":
-    # mp.set_start_method("spawn", force=True)
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--epoch', type=int, default=None, help='训练轮数')
+    parser.add_argument('--cuda', type=int, default=0, help='CUDA序号')
+    parser.add_argument('--problem_size', type=int, default=50, help='问题规模')
+    opt = parser.parse_args()
+    main(opt)
